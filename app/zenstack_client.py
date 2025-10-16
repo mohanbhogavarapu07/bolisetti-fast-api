@@ -6,7 +6,7 @@ import json
 
 class ZenStackClient:
     def __init__(self):
-        self.base_url = settings.zenstack_service_url
+        self.base_url = settings.zenstack_service_url + "/api"
         self.client = httpx.AsyncClient(timeout=30.0)
     
     async def _make_request(
