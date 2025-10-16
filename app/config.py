@@ -22,12 +22,7 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     
-    # CORS Configuration
-    allowed_origins: List[str] = [
-        "http://localhost:3000",
-        "http://localhost:8080", 
-        "http://localhost:19006"
-    ]
+    # CORS Configuration - handled manually to avoid Pydantic JSON parsing
     
     # File Upload Configuration
     max_file_size: int = 10485760  # 10MB
@@ -39,9 +34,15 @@ class Settings(BaseSettings):
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        # Override CORS origins if environment variable is set
+        # Handle CORS origins manually to avoid Pydantic JSON parsing issues
         if os.getenv("ALLOWED_ORIGINS"):
             self.allowed_origins = os.getenv("ALLOWED_ORIGINS").split(",")
+        else:
+            self.allowed_origins = [
+                "http://localhost:3000",
+                "http://localhost:8080", 
+                "http://localhost:19006"
+            ]
     
     class Config:
         case_sensitive = False
