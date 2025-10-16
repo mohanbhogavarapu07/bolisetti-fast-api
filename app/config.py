@@ -23,7 +23,11 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
     
     # CORS Configuration
-    allowed_origins: List[str] = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:8080,http://localhost:19006").split(",")
+    allowed_origins: List[str] = [
+        "http://localhost:3000",
+        "http://localhost:8080", 
+        "http://localhost:19006"
+    ]
     
     # File Upload Configuration
     max_file_size: int = 10485760  # 10MB
@@ -32,6 +36,12 @@ class Settings(BaseSettings):
     # ZenStack Service Configuration
     zenstack_service_url: str = os.getenv("ZENSTACK_SERVICE_URL", "https://bolisetti-zenstack.onrender.com")
     zenstack_service_port: int = 3001
+    
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Override CORS origins if environment variable is set
+        if os.getenv("ALLOWED_ORIGINS"):
+            self.allowed_origins = os.getenv("ALLOWED_ORIGINS").split(",")
     
     class Config:
         case_sensitive = False
