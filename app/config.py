@@ -9,25 +9,21 @@ class Settings(BaseSettings):
     debug: bool = True
     
     # Database Configuration
-    DATABASE_URL: str = "postgresql://postgres.mqvtfijggstbztaxmonu:Mohan@2005@aws-1-ap-south-1.pooler.supabase.com:6543/postgres?pgbouncer=true"
-    DIRECT_URL: str = "postgresql://postgres.mqvtfijggstbztaxmonu:Mohan@2005@aws-1-ap-south-1.pooler.supabase.com:5432/postgres"
+    DATABASE_URL: str = os.getenv("DATABASE_URL", "")
+    DIRECT_URL: str = os.getenv("DIRECT_URL", "")
 
     # Supabase Configuration
-    SUPABASE_URL: str = "https://mqvtfijggstbztaxmonu.supabase.co"
-    SUPABASE_KEY: str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xdnRmaWpnZ3N0Ynp0YXhtb251Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTk5ODQzMzksImV4cCI6MjA3NTU2MDMzOX0.VzkTbGHO3dXv374jpcNV4osYNLwov1S94ShhtWqloXs"
-    SUPABASE_SERVICE_ROLE_KEY: str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xdnRmaWpnZ3N0Ynp0YXhtb251Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1OTk4NDMzOSwiZXhwIjoyMDc1NTYwMzM5fQ.xTfiNf9ZVmLA8OK8yqy0zFF34XwqEfZ4idJcQVMIK-0"
+    SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
+    SUPABASE_KEY: str = os.getenv("SUPABASE_KEY", "")
+    SUPABASE_SERVICE_ROLE_KEY: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
     
     # JWT Configuration
-    SECRET_KEY: str = "oi8b9RRvAbVawdPOxPKeUnu_9QAmqTlLk7lGhpWifZU"
+    SECRET_KEY: str = os.getenv("SECRET_KEY", "")
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     
     # CORS Configuration
-    allowed_origins: List[str] = [
-        "http://localhost:3000",
-        "http://localhost:8080", 
-        "http://localhost:19006"
-    ]
+    allowed_origins: List[str] = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:8080,http://localhost:19006").split(",")
     
     # File Upload Configuration
     max_file_size: int = 10485760  # 10MB
