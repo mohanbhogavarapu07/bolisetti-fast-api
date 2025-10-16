@@ -36,13 +36,13 @@ class Settings(BaseSettings):
         super().__init__(**kwargs)
         # Handle CORS origins manually to avoid Pydantic JSON parsing issues
         if os.getenv("ALLOWED_ORIGINS"):
-            self.allowed_origins = os.getenv("ALLOWED_ORIGINS").split(",")
+            object.__setattr__(self, 'allowed_origins', os.getenv("ALLOWED_ORIGINS").split(","))
         else:
-            self.allowed_origins = [
+            object.__setattr__(self, 'allowed_origins', [
                 "http://localhost:3000",
                 "http://localhost:8080", 
                 "http://localhost:19006"
-            ]
+            ])
     
     class Config:
         case_sensitive = False
