@@ -193,6 +193,7 @@ async def upload_profile_image(
                 # Upload to Supabase storage
                 image_url = await save_upload_file(file, "profiles")
             except Exception as upload_error:
+                print(f"Profile image upload failed: {str(upload_error)}")
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail=f"Failed to upload profile image: {str(upload_error)}"
