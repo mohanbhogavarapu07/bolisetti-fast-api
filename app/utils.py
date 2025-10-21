@@ -7,8 +7,11 @@ from app.config import settings
 from app.zenstack_client import zenstack_client
 
 async def save_upload_file(upload_file: UploadFile, folder: str = "uploads", user_token: Optional[str] = None) -> str:
-    """Save uploaded file to Supabase Storage via ZenStack"""
+    """Save uploaded file directly to Supabase Storage"""
     try:
+        import httpx
+        from app.config import settings
+        
         # Generate unique filename
         file_extension = os.path.splitext(upload_file.filename)[1] if upload_file.filename else ".jpg"
         unique_filename = f"{uuid.uuid4()}{file_extension}"
@@ -16,19 +19,23 @@ async def save_upload_file(upload_file: UploadFile, folder: str = "uploads", use
         # Read file content
         file_content = await upload_file.read()
         
-        # Upload via ZenStack to Supabase Storage
-        response = await zenstack_client.upload_file(
-            file_data=file_content,
-            filename=unique_filename,
-            content_type=upload_file.content_type or "application/octet-stream",
-            folder=folder,
-            user_token=user_token
-        )
+        # Upload directly to Supabase Storage
+        file_path = f"{folder}/{unique_filename}"
+        url = f"{settings.SUPABASE_URL}/storage/v1/object/bolisetti-files/{file_path}"
         
-        if response and response.get("success"):
-            return response.get("url")
-        else:
-            raise Exception("Upload failed")
+        headers = {
+            "Authorization": f"Bearer {settings.SUPABASE_SERVICE_ROLE_KEY}",
+            "Content-Type": upload_file.content_type or "application/octet-stream"
+        }
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, content=file_content, headers=headers)
+            
+            if response.status_code == 200:
+                # Return the public URL
+                return f"{settings.SUPABASE_URL}/storage/v1/object/public/bolisetti-files/{file_path}"
+            else:
+                raise Exception(f"Supabase upload failed: {response.status_code} - {response.text}")
             
     except Exception as e:
         raise HTTPException(

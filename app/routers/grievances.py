@@ -123,10 +123,9 @@ async def create_grievance(
                 # Upload to Supabase storage
                 image_url = await save_upload_file(file, "grievances")
             except Exception as e:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"Failed to upload image: {str(e)}"
-                )
+                # Don't fail the entire request if image upload fails
+                print(f"Image upload failed: {str(e)}")
+                image_url = None
         
         # Create grievance data
         grievance_data = {
