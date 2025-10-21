@@ -17,13 +17,11 @@ async def get_schedule_events(
 ):
     """Get all scheduled events with optional date filters"""
     try:
-        print(f"Fetching schedule events with skip={skip}, limit={limit}")
         result = await zenstack_client.get_schedule_events(
             skip=skip,
             take=limit,
-            user_token=current_admin.get('token')
+            user_token=current_user.get('token')
         )
-        print(f"ZenStack response: {result}")
         events = result.get('data', [])
         
         # Apply date filters if provided
@@ -37,7 +35,6 @@ async def get_schedule_events(
         
         return events
     except Exception as e:
-        print(f"Error in get_schedule_events: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch schedule events: {str(e)}"
@@ -52,7 +49,7 @@ async def get_schedule_event_by_id(
     try:
         result = await zenstack_client.get_schedule_event(
             event_id=event_id,
-            user_token=current_admin.get('token')
+            user_token=current_user.get('token')
         )
         # Extract the actual event data from the ZenStack response
         if 'data' in result:
@@ -77,8 +74,13 @@ async def create_schedule_event(
 ):
     """Create a new scheduled event (Admin only)"""
     try:
+        # Convert datetime to ISO string format for JSON serialization
+        event_dict = event_data.dict()
+        if 'eventDatetime' in event_dict and event_dict['eventDatetime']:
+            event_dict['eventDatetime'] = event_dict['eventDatetime'].isoformat()
+        
         result = await zenstack_client.create_schedule_event(
-            event_data=event_data.dict(),
+            event_data=event_dict,
             user_token=current_admin.get('token')
         )
         # Extract the actual event data from the ZenStack response
@@ -114,6 +116,10 @@ async def update_schedule_event(
         update_data = {k: v for k, v in event_update.dict().items() if v is not None}
         if not update_data:
             return existing_event.get('data', existing_event)
+        
+        # Convert datetime to ISO string format for JSON serialization
+        if 'eventDatetime' in update_data and update_data['eventDatetime']:
+            update_data['eventDatetime'] = update_data['eventDatetime'].isoformat()
         
         result = await zenstack_client.update_schedule_event(
             event_id=event_id,
@@ -176,7 +182,7 @@ async def get_upcoming_events(
         end_date = start_date + timedelta(days=days)
         
         result = await zenstack_client.get_schedule_events(
-            user_token=current_admin.get('token')
+            user_token=current_user.get('token')
         )
         events = result.get('data', [])
         

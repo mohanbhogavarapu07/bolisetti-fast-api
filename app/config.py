@@ -1,6 +1,7 @@
 from pydantic_settings import BaseSettings
 from typing import List, Optional
 import os
+from pathlib import Path
 
 class Settings(BaseSettings):
     # App Configuration
@@ -29,7 +30,7 @@ class Settings(BaseSettings):
     upload_dir: str = "uploads"
     
     # ZenStack Service Configuration
-    zenstack_service_url: str = os.getenv("ZENSTACK_SERVICE_URL", "https://bolisetti-zenstack.onrender.com")
+    zenstack_service_url: str = os.getenv("ZENSTACK_SERVICE_URL", "http://localhost:3001")
     zenstack_service_port: int = 3001
     
     def __init__(self, **kwargs):
@@ -49,6 +50,8 @@ class Settings(BaseSettings):
     class Config:
         case_sensitive = False
         extra = "ignore"  # Ignore extra fields
+        env_file = ".env"
+        env_file_encoding = "utf-8"
 
 # Create settings instance
 settings = Settings()

@@ -94,12 +94,12 @@ class GrievanceBase(BaseModel):
     address: str
     area: Optional[str] = None
     priority: Priority = Priority.MEDIUM
+    imageUrl: Optional[str] = None  # Direct Supabase URL
 
 class GrievanceCreate(GrievanceBase):
     constituencyId: Optional[str] = None
     departmentId: Optional[str] = None
     statusId: Optional[str] = None
-    mediaId: Optional[str] = None
 
 class GrievanceUpdate(BaseModel):
     title: Optional[str] = None
@@ -108,6 +108,7 @@ class GrievanceUpdate(BaseModel):
     area: Optional[str] = None
     status: Optional[GrievanceStatus] = None
     priority: Optional[Priority] = None
+    imageUrl: Optional[str] = None
     constituencyId: Optional[str] = None
     departmentId: Optional[str] = None
     statusId: Optional[str] = None
@@ -121,7 +122,6 @@ class Grievance(GrievanceBase):
     constituencyId: Optional[str] = None
     departmentId: Optional[str] = None
     statusId: Optional[str] = None
-    mediaId: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -215,6 +215,7 @@ class ProjectBase(BaseModel):
     description: str
     location: Optional[str] = None
     projectStatus: Optional[str] = None
+    imageUrl: Optional[str] = None  # Direct Supabase URL
 
 class ProjectCreate(ProjectBase):
     pass
@@ -224,6 +225,7 @@ class ProjectUpdate(BaseModel):
     description: Optional[str] = None
     location: Optional[str] = None
     projectStatus: Optional[str] = None
+    imageUrl: Optional[str] = None
 
 class Project(ProjectBase):
     id: str
@@ -262,6 +264,9 @@ class MediaBase(BaseModel):
     title: str
     mediaUrl: str
     type: MediaType
+    uniqueCode: str  # Unique identifier for media
+    entityType: str  # "PROJECT" or "GRIEVANCE" to distinguish usage
+    entityId: Optional[str] = None  # ID of the project or grievance
 
 class MediaCreate(MediaBase):
     pass
@@ -270,6 +275,9 @@ class MediaUpdate(BaseModel):
     title: Optional[str] = None
     mediaUrl: Optional[str] = None
     type: Optional[MediaType] = None
+    uniqueCode: Optional[str] = None
+    entityType: Optional[str] = None
+    entityId: Optional[str] = None
 
 class Media(MediaBase):
     id: str
