@@ -1,8 +1,9 @@
-from fastapi import APIRouter, HTTPException, status, Depends, Query
+from fastapi import APIRouter, HTTPException, status, Depends, Query, UploadFile, File, Form
 from typing import List, Optional
 from app.models import Grievance, GrievanceCreate, GrievanceUpdate, GrievanceComment, GrievanceCommentCreate, GrievanceStatus, Priority
 from app.auth import get_current_user, get_current_admin
 from app.zenstack_client import zenstack_client
+from app.utils import save_upload_file
 
 router = APIRouter(prefix="/grievances", tags=["grievances"])
 
@@ -103,16 +104,45 @@ async def get_grievance(
 
 @router.post("/", response_model=Grievance)
 async def create_grievance(
-    grievance_data: GrievanceCreate,
+    title: str = Form(...),
+    description: str = Form(...),
+    address: str = Form(...),
+    area: Optional[str] = Form(None),
+    constituencyId: Optional[str] = Form(None),
+    departmentId: Optional[str] = Form(None),
+    priority: str = Form("MEDIUM"),
+    file: Optional[UploadFile] = File(None),
     current_user: dict = Depends(get_current_user)
 ):
-    """Create a new grievance (Both users and admins can create)"""
+    """Create a new grievance with optional image upload"""
     try:
-        grievance_data_dict = grievance_data.dict()
-        grievance_data_dict["userId"] = current_user["id"]
+        # Handle image upload if provided
+        image_url = None
+        if file and file.filename:
+            try:
+                # Upload to Supabase storage
+                image_url = await save_upload_file(file, "grievances")
+            except Exception as e:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to upload image: {str(e)}"
+                )
+        
+        # Create grievance data
+        grievance_data = {
+            "title": title,
+            "description": description,
+            "address": address,
+            "area": area,
+            "constituencyId": constituencyId,
+            "departmentId": departmentId,
+            "priority": priority,
+            "imageUrl": image_url,
+            "userId": current_user["id"]
+        }
         
         result = await zenstack_client.create_grievance(
-            grievance_data=grievance_data_dict,
+            grievance_data=grievance_data,
             user_token=current_user.get('token')
         )
         

@@ -145,7 +145,7 @@ class ZenStackClient:
     async def get_grievance(self, grievance_id: str, user_token: Optional[str] = None) -> Dict[str, Any]:
         """Get grievance by ID"""
         headers = {"Authorization": f"Bearer {user_token}"} if user_token else {}
-        return await self._make_request("GET", "/Grievance/findUnique", params={"where": {"id": grievance_id}}, headers=headers)
+        return await self._make_request("GET", "/Grievance/findUnique", data={"where": {"id": grievance_id}}, headers=headers)
     
     async def create_grievance(self, grievance_data: Dict[str, Any], user_token: Optional[str] = None) -> Dict[str, Any]:
         """Create new grievance"""
@@ -199,10 +199,16 @@ class ZenStackClient:
         return await self._make_request("DELETE", f"/News/delete", data={"where": {"id": news_id}}, headers=headers)
     
     # Project operations
-    async def get_projects(self, skip: int = 0, take: int = 100, user_token: Optional[str] = None) -> Dict[str, Any]:
-        """Get all projects"""
+    async def get_projects(self, skip: int = 0, take: int = 100, status_filter: Optional[str] = None, user_token: Optional[str] = None) -> Dict[str, Any]:
+        """Get all projects with optional status filtering"""
         headers = {"Authorization": f"Bearer {user_token}"} if user_token else {}
-        return await self._make_request("GET", "/Project/findMany", params={"skip": skip, "take": take}, headers=headers)
+        params = {"skip": skip, "take": take}
+        
+        # Add status filter if provided
+        if status_filter:
+            params["where"] = {"projectStatus": status_filter}
+            
+        return await self._make_request("GET", "/Project/findMany", params=params, headers=headers)
     
     async def get_project(self, project_id: str, user_token: Optional[str] = None) -> Dict[str, Any]:
         """Get project by ID"""
@@ -217,7 +223,7 @@ class ZenStackClient:
     async def update_project(self, project_id: str, project_data: Dict[str, Any], user_token: Optional[str] = None) -> Dict[str, Any]:
         """Update project (Admin only)"""
         headers = {"Authorization": f"Bearer {user_token}"} if user_token else {}
-        return await self._make_request("PUT", f"/projects/{project_id}", data=project_data, headers=headers)
+        return await self._make_request("PUT", "/Project/update", data={"where": {"id": project_id}, "data": project_data}, headers=headers)
     
     async def delete_project(self, project_id: str, user_token: Optional[str] = None) -> Dict[str, Any]:
         """Delete project (Admin only)"""
@@ -228,12 +234,12 @@ class ZenStackClient:
     async def get_schedule_events(self, skip: int = 0, take: int = 100, user_token: Optional[str] = None) -> Dict[str, Any]:
         """Get all schedule events"""
         headers = {"Authorization": f"Bearer {user_token}"} if user_token else {}
-        return await self._make_request("GET", "/scheduleEvents", params={"skip": skip, "take": take}, headers=headers)
+        return await self._make_request("GET", "/ScheduleEvent/findMany", params={"skip": skip, "take": take}, headers=headers)
     
     async def get_schedule_event(self, event_id: str, user_token: Optional[str] = None) -> Dict[str, Any]:
         """Get schedule event by ID"""
         headers = {"Authorization": f"Bearer {user_token}"} if user_token else {}
-        return await self._make_request("GET", f"/scheduleEvents/{event_id}", headers=headers)
+        return await self._make_request("GET", "/ScheduleEvent/findUnique", data={"where": {"id": event_id}}, headers=headers)
     
     async def create_schedule_event(self, event_data: Dict[str, Any], user_token: Optional[str] = None) -> Dict[str, Any]:
         """Create schedule event (Admin only)"""
@@ -243,12 +249,12 @@ class ZenStackClient:
     async def update_schedule_event(self, event_id: str, event_data: Dict[str, Any], user_token: Optional[str] = None) -> Dict[str, Any]:
         """Update schedule event (Admin only)"""
         headers = {"Authorization": f"Bearer {user_token}"} if user_token else {}
-        return await self._make_request("PUT", f"/scheduleEvents/{event_id}", data=event_data, headers=headers)
+        return await self._make_request("PUT", "/ScheduleEvent/update", data={"where": {"id": event_id}, "data": event_data}, headers=headers)
     
     async def delete_schedule_event(self, event_id: str, user_token: Optional[str] = None) -> Dict[str, Any]:
         """Delete schedule event (Admin only)"""
         headers = {"Authorization": f"Bearer {user_token}"} if user_token else {}
-        return await self._make_request("DELETE", f"/scheduleEvents/{event_id}", headers=headers)
+        return await self._make_request("DELETE", "/ScheduleEvent/delete", data={"where": {"id": event_id}}, headers=headers)
     
     # Media operations
     async def get_media(self, skip: int = 0, take: int = 100, user_token: Optional[str] = None) -> Dict[str, Any]:
@@ -259,7 +265,7 @@ class ZenStackClient:
     async def get_media_item(self, media_id: str, user_token: Optional[str] = None) -> Dict[str, Any]:
         """Get media by ID"""
         headers = {"Authorization": f"Bearer {user_token}"} if user_token else {}
-        return await self._make_request("GET", f"/Media/findUnique", params={"where": {"id": media_id}}, headers=headers)
+        return await self._make_request("GET", f"/Media/findUnique", data={"where": {"id": media_id}}, headers=headers)
     
     async def create_media(self, media_data: Dict[str, Any], user_token: Optional[str] = None) -> Dict[str, Any]:
         """Create media (Admin only)"""
@@ -479,17 +485,8 @@ class ZenStackClient:
         try:
             import base64
             
-            print(f"🔍 ZenStack Client Debug - Upload Request:")
-            print(f"  - Filename: {filename}")
-            print(f"  - ContentType: {content_type}")
-            print(f"  - Folder: {folder}")
-            print(f"  - FileSize: {len(file_data)} bytes")
-            print(f"  - UserToken: {'Present' if user_token else 'None'}")
-            
             headers = {"Authorization": f"Bearer {user_token}"} if user_token else {}
             file_base64 = base64.b64encode(file_data).decode('utf-8')
-            
-            print(f"  - Base64 length: {len(file_base64)} chars")
             
             data = {
                 "file": file_base64,
@@ -498,7 +495,6 @@ class ZenStackClient:
                 "folder": folder
             }
             
-            print(f"🔍 Sending request to ZenStack service...")
             # Storage endpoints are at root level, not under /api
             url = f"http://localhost:3001/storage/upload"
             response = await self.client.request(
@@ -509,11 +505,31 @@ class ZenStackClient:
             )
             response.raise_for_status()
             result = response.json()
-            print(f"  - Response: {result}")
             return result
         except Exception as e:
-            print(f"❌ Error uploading file: {e}")
             return None
+
+    # Media operations
+    async def create_media(self, media_data: Dict[str, Any], user_token: Optional[str] = None) -> Dict[str, Any]:
+        """Create media record"""
+        headers = {"Authorization": f"Bearer {user_token}"} if user_token else {}
+        return await self._make_request("POST", "/Media/create", data={"data": media_data}, headers=headers)
+    
+    async def get_media(self, media_id: str, user_token: Optional[str] = None) -> Dict[str, Any]:
+        """Get media by ID"""
+        headers = {"Authorization": f"Bearer {user_token}"} if user_token else {}
+        return await self._make_request("GET", f"/Media/{media_id}", headers=headers)
+    
+    async def get_media_by_entity(self, entity_type: str, entity_id: str, user_token: Optional[str] = None) -> Dict[str, Any]:
+        """Get media by entity type and ID"""
+        headers = {"Authorization": f"Bearer {user_token}"} if user_token else {}
+        params = {"where": {"entityType": entity_type, "entityId": entity_id}}
+        return await self._make_request("GET", "/Media/findMany", params=params, headers=headers)
+    
+    async def delete_media(self, media_id: str, user_token: Optional[str] = None) -> Dict[str, Any]:
+        """Delete media record"""
+        headers = {"Authorization": f"Bearer {user_token}"} if user_token else {}
+        return await self._make_request("DELETE", "/Media/delete", data={"where": {"id": media_id}}, headers=headers)
 
     async def delete_file(self, file_path: str, user_token: Optional[str] = None) -> bool:
         """Delete file from Supabase Storage via ZenStack"""

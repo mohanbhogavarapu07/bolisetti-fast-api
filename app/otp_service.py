@@ -9,6 +9,11 @@ import httpx
 class OTPService:
     def __init__(self):
         import os
+        from dotenv import load_dotenv
+        
+        # Load environment variables from .env file
+        load_dotenv()
+        
         self.otp_length = 6
         self.otp_expiry_minutes = 1  # OTP expires in 1 minute (60 seconds)
         # SMS service configuration
@@ -16,6 +21,7 @@ class OTPService:
         self.twilio_account_sid = os.getenv("TWILIO_ACCOUNT_SID", "")
         self.twilio_auth_token = os.getenv("TWILIO_AUTH_TOKEN", "")
         self.twilio_phone_number = os.getenv("TWILIO_PHONE_NUMBER", "")
+        
     
     def generate_otp(self) -> str:
         """Generate a random 6-digit OTP"""
@@ -24,10 +30,10 @@ class OTPService:
     async def send_sms(self, phone_number: str, message: str) -> dict:
         """Send SMS using configured service"""
         try:
-            if self.sms_service == "twilio":
-                return await self._send_twilio_sms(phone_number, message)
-            elif self.sms_service == "textlocal":
-                return await self._send_textlocal_sms(phone_number, message)
+            if self.sms_service == "sms_provider_1":
+                return await self._send_sms_provider_1(phone_number, message)
+            elif self.sms_service == "sms_provider_2":
+                return await self._send_sms_provider_2(phone_number, message)
             else:
                 # Fallback to console for development
                 print(f"SMS to {phone_number}: {message}")
@@ -36,9 +42,13 @@ class OTPService:
             print(f"SMS sending failed: {str(e)}")
             return {"success": False, "message": f"SMS sending failed: {str(e)}"}
     
-    async def _send_twilio_sms(self, phone_number: str, message: str) -> dict:
-        """Send SMS via Twilio"""
+    async def _send_sms_provider_1(self, phone_number: str, message: str) -> dict:
+        """Send SMS via SMS Provider 1"""
         try:
+            # Check if credentials are set
+            if not self.twilio_account_sid or not self.twilio_auth_token or not self.twilio_phone_number:
+                return {"success": False, "message": "SMS provider credentials not configured properly"}
+            
             # Format phone number (add +91 for India)
             if not phone_number.startswith('+'):
                 phone_number = f"+91{phone_number}"
@@ -61,24 +71,24 @@ class OTPService:
                 if response.status_code == 201:
                     return {"success": True, "message": "SMS sent successfully"}
                 else:
-                    return {"success": False, "message": f"Twilio error: {response.text}"}
+                    return {"success": False, "message": f"SMS provider error: {response.text}"}
                     
         except Exception as e:
-            return {"success": False, "message": f"Twilio SMS failed: {str(e)}"}
+            return {"success": False, "message": f"SMS provider failed: {str(e)}"}
     
-    async def _send_textlocal_sms(self, phone_number: str, message: str) -> dict:
-        """Send SMS via TextLocal (India)"""
+    async def _send_sms_provider_2(self, phone_number: str, message: str) -> dict:
+        """Send SMS via SMS Provider 2"""
         try:
-            # TextLocal API configuration
-            textlocal_api_key = "YOUR_TEXTLOCAL_API_KEY"
-            textlocal_sender = "BOLISETTI"
+            # SMS Provider 2 API configuration
+            api_key = os.getenv("SMS_PROVIDER_2_API_KEY", "YOUR_API_KEY")
+            sender = "BOLISETTI"
             
-            url = "https://api.textlocal.in/send/"
+            url = "https://api.smsprovider2.com/send/"
             data = {
-                "apikey": textlocal_api_key,
+                "apikey": api_key,
                 "numbers": phone_number,
                 "message": message,
-                "sender": textlocal_sender
+                "sender": sender
             }
             
             async with httpx.AsyncClient() as client:
@@ -88,15 +98,14 @@ class OTPService:
                 if result.get("status") == "success":
                     return {"success": True, "message": "SMS sent successfully"}
                 else:
-                    return {"success": False, "message": f"TextLocal error: {result.get('errors', 'Unknown error')}"}
+                    return {"success": False, "message": f"SMS provider error: {result.get('errors', 'Unknown error')}"}
                     
         except Exception as e:
-            return {"success": False, "message": f"TextLocal SMS failed: {str(e)}"}
+            return {"success": False, "message": f"SMS provider failed: {str(e)}"}
     
     async def send_otp(self, phone_number: str) -> dict:
         """
         Generate and send OTP to phone number
-        In production, this would integrate with SMS service like Twilio
         """
         try:
             # Generate OTP

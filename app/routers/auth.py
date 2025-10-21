@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, status, Depends, UploadFile, File
 from fastapi.security import HTTPBearer
 from app.models import (
     User, Token, PhoneLoginRequest, OTPVerificationRequest, 
@@ -6,10 +6,11 @@ from app.models import (
 )
 from app.auth import (
     create_access_token, get_current_user_by_token, authenticate_phone_user,
-    validate_voter_id, create_user_session
+    validate_voter_id, create_user_session, get_current_user
 )
 from app.otp_service import otp_service
 from app.zenstack_client import zenstack_client
+from app.utils import save_upload_file
 from datetime import timedelta
 from app.config import settings
 
@@ -176,4 +177,58 @@ async def load_voter_ids():
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to load voter IDs: {str(e)}"
+        )
+
+@router.post("/profile/image", response_model=User)
+async def upload_profile_image(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user)
+):
+    """Upload profile image for the current user"""
+    try:
+        # Handle image upload
+        image_url = None
+        if file and file.filename:
+            try:
+                # Upload to Supabase storage
+                image_url = await save_upload_file(file, "profiles")
+            except Exception as upload_error:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to upload profile image: {str(upload_error)}"
+                )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No image file provided"
+            )
+
+        # Update user profile with image URL
+        user_id = current_user.get('id')
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User ID not found in token"
+            )
+
+        # Update user profile in database
+        update_data = {"profilePictureUrl": image_url}
+        update_result = await zenstack_client.update_user(user_id, update_data)
+        
+        if not update_result or 'data' not in update_result:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to update user profile"
+            )
+
+        # Extract the actual user data from ZenStack response
+        updated_user = update_result['data']
+        return updated_user
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to upload profile image: {str(e)}"
         )

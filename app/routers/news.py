@@ -1,8 +1,9 @@
-from fastapi import APIRouter, HTTPException, status, Depends, Query
+from fastapi import APIRouter, HTTPException, status, Depends, Query, UploadFile, File, Form
 from typing import List, Optional
 from app.models import News, NewsCreate, NewsUpdate
 from app.auth import get_current_user, get_current_admin
 from app.zenstack_client import zenstack_client
+from app.utils import save_upload_file
 
 router = APIRouter(prefix="/news", tags=["news"])
 
@@ -17,7 +18,7 @@ async def get_news(
         result = await zenstack_client.get_news(
             skip=skip,
             take=limit,
-            user_token=current_admin.get('token')
+            user_token=current_user.get('token')
         )
         return result.get('data', [])
     except Exception as e:
@@ -35,7 +36,7 @@ async def get_news_by_id(
     try:
         result = await zenstack_client.get_news_item(
             news_id=news_id,
-            user_token=current_admin.get('token')
+            user_token=current_user.get('token')
         )
         # Extract the actual news data from the ZenStack response
         if 'data' in result:
@@ -55,13 +56,34 @@ async def get_news_by_id(
 
 @router.post("/", response_model=News)
 async def create_news(
-    news_data: NewsCreate,
+    title: str = Form(...),
+    content: str = Form(...),
+    file: Optional[UploadFile] = File(None),
     current_admin: dict = Depends(get_current_admin)
 ):
-    """Create a new news article (Admin only)"""
+    """Create a new news article with optional image upload (Admin only)"""
     try:
+        # Handle image upload if provided
+        image_url = None
+        if file and file.filename:
+            try:
+                # Upload to Supabase storage
+                image_url = await save_upload_file(file, "news")
+            except Exception as e:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to upload image: {str(e)}"
+                )
+        
+        # Create news data
+        news_data = {
+            "title": title,
+            "content": content,
+            "imageUrl": image_url
+        }
+        
         result = await zenstack_client.create_news(
-            news_data=news_data.dict(),
+            news_data=news_data,
             user_token=current_admin.get('token')
         )
         # Extract the actual news data from the ZenStack response
