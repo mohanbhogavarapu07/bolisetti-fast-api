@@ -10,8 +10,15 @@ from app.zenstack_client import zenstack_client
 from app.otp_service import otp_service
 # Removed direct Prisma imports - using ZenStack client instead
 
-# Password hashing for admin authentication
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__default_rounds=12)
+# Password hashing for admin authentication - using pbkdf2_sha256 as fallback
+try:
+    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__default_rounds=12)
+    # Test if bcrypt actually works
+    test_hash = pwd_context.hash("test")
+    pwd_context.verify("test", test_hash)
+except Exception:
+    # Fallback to pbkdf2_sha256 if bcrypt fails
+    pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
 # JWT token scheme
 security = HTTPBearer()
@@ -199,26 +206,32 @@ async def authenticate_phone_user(phone_number: str, voter_id: str) -> dict:
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against its hash"""
     try:
-        # Truncate password to 72 bytes (bcrypt limit)
-        if len(plain_password.encode('utf-8')) > 72:
-            plain_password = plain_password[:72]
+        # Try using the configured context first
         return pwd_context.verify(plain_password, hashed_password)
     except Exception as e:
-        # Fallback to simple hash verification if bcrypt fails
-        import hashlib
-        return hashlib.sha256(plain_password.encode()).hexdigest() == hashed_password
+        # Fallback to pbkdf2_sha256 if bcrypt fails
+        try:
+            from passlib.hash import pbkdf2_sha256
+            return pbkdf2_sha256.verify(plain_password, hashed_password)
+        except Exception:
+            # Final fallback to SHA256
+            import hashlib
+            return hashlib.sha256(plain_password.encode()).hexdigest() == hashed_password
 
 def get_password_hash(password: str) -> str:
     """Hash a password"""
     try:
-        # Truncate password to 72 bytes (bcrypt limit)
-        if len(password.encode('utf-8')) > 72:
-            password = password[:72]
+        # Try using the configured context first
         return pwd_context.hash(password)
     except Exception as e:
-        # Fallback to simple hash if bcrypt fails
-        import hashlib
-        return hashlib.sha256(password.encode()).hexdigest()
+        # Fallback to pbkdf2_sha256 if bcrypt fails
+        try:
+            from passlib.hash import pbkdf2_sha256
+            return pbkdf2_sha256.hash(password)
+        except Exception:
+            # Final fallback to SHA256
+            import hashlib
+            return hashlib.sha256(password.encode()).hexdigest()
 
 async def get_admin_by_email(email: str) -> Optional[dict]:
     """Get admin by email from Admin table"""
