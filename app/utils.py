@@ -4,7 +4,7 @@ import hashlib
 from typing import Optional, Dict, Any
 from fastapi import UploadFile, HTTPException
 from app.config import settings
-from app.zenstack_client import zenstack_client
+# Removed zenstack_client import - using direct Supabase storage
 
 async def save_upload_file(upload_file: UploadFile, folder: str = "uploads", user_token: Optional[str] = None) -> str:
     """Save uploaded file directly to Supabase Storage"""
@@ -72,14 +72,21 @@ async def upload_project_image(
         # Read file content
         file_content = await upload_file.read()
         
-        # Upload to Supabase Storage via ZenStack
-        response = await zenstack_client.upload_file(
-            file_data=file_content,
-            filename=unique_filename,
-            content_type=upload_file.content_type or "image/jpeg",
-            folder="projects",
-            user_token=user_token
-        )
+        # Upload directly to Supabase Storage
+        file_path = f"projects/{unique_filename}"
+        url = f"{settings.SUPABASE_URL}/storage/v1/object/bolisetti-files/{file_path}"
+        
+        headers = {
+            "Authorization": f"Bearer {settings.SUPABASE_SERVICE_ROLE_KEY}",
+            "Content-Type": upload_file.content_type or "image/jpeg"
+        }
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, content=file_content, headers=headers)
+            if response.status_code == 200:
+                response = {"success": True, "url": f"{settings.SUPABASE_URL}/storage/v1/object/public/bolisetti-files/{file_path}"}
+            else:
+                response = {"success": False, "error": f"Upload failed: {response.text}"}
         
         if response and response.get("success"):
             # Create media record in database
@@ -92,10 +99,10 @@ async def upload_project_image(
                 "entityId": project_id
             }
             
-            media_result = await zenstack_client.create_media(
-                media_data=media_data,
-                user_token=user_token
-            )
+            # Create media record in database
+            from app.database import db_client
+            async with db_client:
+                media_result = await db_client.create_media(media_data)
             
             if media_result and media_result.get("success"):
                 return {
@@ -124,11 +131,9 @@ async def upload_project_image(
 async def get_project_images(project_id: str, user_token: Optional[str] = None) -> Dict[str, Any]:
     """Get all images for a specific project"""
     try:
-        result = await zenstack_client.get_media_by_entity(
-            entity_type="PROJECT",
-            entity_id=project_id,
-            user_token=user_token
-        )
+        from app.database import db_client
+        async with db_client:
+            result = await db_client.get_media_by_entity("PROJECT", project_id)
         return result
     except Exception as e:
         return {
@@ -139,27 +144,28 @@ async def get_project_images(project_id: str, user_token: Optional[str] = None) 
 async def delete_project_image(media_id: str, user_token: Optional[str] = None) -> bool:
     """Delete project image from storage and media table"""
     try:
-        # First get media record to get file URL
-        media_record = await zenstack_client.get_media(media_id, user_token)
-        if not media_record or not media_record.get("success"):
-            return False
+        from app.database import db_client
+        async with db_client:
+            # First get media record to get file URL
+            media_record = await db_client.get_media(media_id)
+            if not media_record:
+                return False
+                
+            file_url = media_record.get("mediaUrl")
             
-        media_data = media_record.get("data", {})
-        file_url = media_data.get("mediaUrl")
-        
-        if file_url:
-            # Delete from Supabase Storage
-            await zenstack_client.delete_file(file_url, user_token)
-        
-        # Delete from media table
-        delete_result = await zenstack_client.delete_media(media_id, user_token)
-        return delete_result and delete_result.get("success", False)
+            if file_url:
+                # Delete from Supabase Storage
+                await delete_file_from_supabase(file_url)
+            
+            # Delete from media table
+            delete_result = await db_client.delete_media(media_id)
+            return delete_result
         
     except Exception as e:
         return False
 
-async def delete_file(file_url: str, user_token: Optional[str] = None) -> bool:
-    """Delete file from Supabase Storage via ZenStack"""
+async def delete_file_from_supabase(file_url: str) -> bool:
+    """Delete file from Supabase Storage directly"""
     try:
         # Extract file path from URL
         if "bolisetti-files/" in file_url:
@@ -167,7 +173,15 @@ async def delete_file(file_url: str, user_token: Optional[str] = None) -> bool:
         else:
             file_path = file_url.split("/")[-1]
         
-        return await zenstack_client.delete_file(file_path, user_token)
+        # Delete from Supabase Storage
+        url = f"{settings.SUPABASE_URL}/storage/v1/object/bolisetti-files/{file_path}"
+        headers = {
+            "Authorization": f"Bearer {settings.SUPABASE_SERVICE_ROLE_KEY}"
+        }
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.delete(url, headers=headers)
+            return response.status_code == 200
     except Exception as e:
         return False
 

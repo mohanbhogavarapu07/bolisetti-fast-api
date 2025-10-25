@@ -9,7 +9,7 @@ from app.auth import (
 from datetime import timedelta
 from app.config import settings
 
-router = APIRouter(prefix="/admin/auth", tags=["admin-authentication"])
+router = APIRouter(prefix="/admin/auth")
 security = HTTPBearer()
 
 @router.post("/login", response_model=AdminToken)
@@ -89,29 +89,20 @@ async def create_admin(
 ):
     """Create new admin (Super admin only)"""
     try:
-        from app.auth import get_password_hash
-        from app.zenstack_client import zenstack_client
+        from app.database import db_client
         
-        # Hash password
-        hashed_password = get_password_hash(admin_data.password)
-        
-        # Create admin data
+        # Store password as plain text (no hashing)
         create_data = {
             "firstName": admin_data.firstName,
             "lastName": admin_data.lastName,
             "email": admin_data.email,
-            "password": hashed_password,
+            "password": admin_data.password,  # Store as plain text
             "isActive": admin_data.isActive
         }
         
-        result = await zenstack_client.create_admin(create_data)
-        if result and 'data' in result:
-            return result['data']
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to create admin"
-            )
+        async with db_client:
+            admin = await db_client.create_admin(create_data)
+            return admin
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -122,17 +113,17 @@ async def create_admin(
 async def list_admins(current_admin: dict = Depends(get_current_admin)):
     """List all admins (Admin only)"""
     try:
-        from app.zenstack_client import zenstack_client
+        from app.database import db_client
         
-        result = await zenstack_client.get_admins()
-        if result and 'data' in result:
-            return result['data']
-        return []
+        async with db_client:
+            admins = await db_client.get_admins()
+            return admins
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch admins: {str(e)}"
         )
+
 
 @router.put("/update/{admin_id}", response_model=Admin)
 async def update_admin(
@@ -142,23 +133,16 @@ async def update_admin(
 ):
     """Update admin (Admin only)"""
     try:
-        from app.auth import get_password_hash
-        from app.zenstack_client import zenstack_client
+        from app.database import db_client
         
         update_data = {k: v for k, v in admin_data.dict().items() if v is not None}
         
-        # Hash password if provided
-        if 'password' in update_data:
-            update_data['password'] = get_password_hash(update_data['password'])
+        # Store password as plain text (no hashing)
+        # Password is already in update_data if provided
         
-        result = await zenstack_client.update_admin(admin_id, update_data)
-        if result and 'data' in result:
-            return result['data']
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Admin not found"
-            )
+        async with db_client:
+            admin = await db_client.update_admin(admin_id, update_data)
+            return admin
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -172,7 +156,7 @@ async def delete_admin(
 ):
     """Delete admin (Super admin only)"""
     try:
-        from app.zenstack_client import zenstack_client
+        from app.database import db_client
         
         # Prevent self-deletion
         if admin_id == current_admin.get('id'):
@@ -181,7 +165,8 @@ async def delete_admin(
                 detail="Cannot delete your own account"
             )
         
-        result = await zenstack_client.delete_admin(admin_id)
+        async with db_client:
+            await db_client.delete_admin(admin_id)
         return {"message": "Admin deleted successfully"}
     except Exception as e:
         raise HTTPException(

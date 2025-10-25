@@ -6,7 +6,7 @@ from fastapi import HTTPException, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.config import settings
 from app.models import TokenData
-from app.zenstack_client import zenstack_client
+from app.database import db_client
 from app.otp_service import otp_service
 # Removed direct Prisma imports - using ZenStack client instead
 
@@ -31,16 +31,11 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     return encoded_jwt
 
 async def get_user_by_email(email: str) -> Optional[dict]:
-    """Get user by email from database via ZenStack"""
+    """Get user by email from database"""
     try:
-        from app.zenstack_client import zenstack_client
-        user = await zenstack_client.get_user_by_email(email)
-        
-        # Extract actual user data from ZenStack response
-        if user and 'data' in user:
-            actual_user = user['data']
-            return actual_user
-        return user
+        async with db_client:
+            user = await db_client.get_user_by_email(email)
+            return user
     except Exception:
         return None
 
@@ -63,7 +58,8 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
             raise credentials_exception
             
         # Get user by phone number (more reliable than by ID)
-        user = await zenstack_client.get_user_by_phone(phone_number, credentials.credentials)
+        async with db_client:
+            user = await db_client.get_user_by_phone(phone_number)
         
         if user is None:
             raise credentials_exception
@@ -85,9 +81,20 @@ async def get_current_active_user(current_user: dict = Depends(get_current_user)
 async def validate_voter_id(voter_id: str) -> bool:
     """Validate if voter ID exists in the database"""
     try:
-        voter_record = await zenstack_client.get_voter_id(voter_id)
-        return voter_record is not None and voter_record.get('data', {}).get('isActive', False)
-    except Exception:
+        print(f"[DEBUG] Validating voter ID: {voter_id}")
+        async with db_client:
+            voter_record = await db_client.get_voter_id(voter_id)
+        print(f"[DEBUG] Voter record found: {voter_record is not None}")
+        if voter_record:
+            print(f"[DEBUG] Voter record details: {voter_record}")
+            is_active = voter_record.get('isActive', False)
+            print(f"[DEBUG] Voter is active: {is_active}")
+            return is_active
+        else:
+            print(f"[DEBUG] No voter record found for: {voter_id}")
+            return False
+    except Exception as e:
+        print(f"[DEBUG] Exception in validate_voter_id: {str(e)}")
         return False
 
 async def create_user_session(user_id: str, phone_number: str) -> dict:
@@ -101,7 +108,8 @@ async def create_user_session(user_id: str, phone_number: str) -> dict:
             "isActive": True
         }
         
-        result = await zenstack_client.create_session(session_data)
+        async with db_client:
+            result = await db_client.create_session(session_data)
         return result
     except Exception as e:
         raise HTTPException(
@@ -112,14 +120,10 @@ async def create_user_session(user_id: str, phone_number: str) -> dict:
 async def get_user_by_phone(phone_number: str) -> Optional[dict]:
     """Get user by phone number"""
     try:
-        # Get all users and filter by phone number
-        all_users = await zenstack_client.get_users()
-        if all_users and 'data' in all_users:
-            users = all_users['data']
-            for user in users:
-                if user.get('phoneNumber') == phone_number:
-                    return user
-        return None
+        # Get user by phone number
+        async with db_client:
+            user = await db_client.get_user_by_phone(phone_number)
+        return user
     except Exception:
         return None
 
@@ -134,7 +138,8 @@ async def create_user_from_phone(phone_number: str, voter_id: str) -> dict:
             # User can add them later through profile section
         }
         
-        result = await zenstack_client.create_user(user_data)
+        async with db_client:
+            result = await db_client.create_user(user_data)
         return result
     except Exception as e:
         raise HTTPException(
@@ -159,16 +164,17 @@ async def get_current_user_by_token(credentials: HTTPAuthorizationCredentials = 
             raise credentials_exception
             
         # Check if user has active session
-        session = await zenstack_client.get_user_session(user_id)
-        if not session or not session.get('data'):
-            raise credentials_exception
+        async with db_client:
+            session = await db_client.get_user_session(user_id)
+            if not session:
+                raise credentials_exception
+                
+            # Get user details
+            user = await db_client.get_user(user_id)
+            if not user:
+                raise credentials_exception
             
-        # Get user details
-        user = await zenstack_client.get_user(user_id)
-        if not user or not user.get('data'):
-            raise credentials_exception
-            
-        return user['data']
+        return user
         
     except JWTError:
         raise credentials_exception
@@ -207,14 +213,9 @@ def get_password_hash(password: str) -> str:
 async def get_admin_by_email(email: str) -> Optional[dict]:
     """Get admin by email from Admin table"""
     try:
-        # Get all admins and filter by email
-        all_admins = await zenstack_client.get_admins()
-        if all_admins and 'data' in all_admins:
-            admins = all_admins['data']
-            for admin in admins:
-                if admin.get('email') == email and admin.get('isActive', True):
-                    return admin
-        return None
+        async with db_client:
+            admin = await db_client.get_admin_by_email(email)
+            return admin
     except Exception:
         return None
 
@@ -227,15 +228,20 @@ async def authenticate_admin(email: str, password: str) -> dict:
             detail="Invalid admin credentials"
         )
     
-    # Verify password
-    if not verify_password(password, admin.get('password', '')):
+    stored_password = admin.get('password', '')
+    
+    # Direct password comparison (no hashing)
+    password_valid = (password == stored_password)
+    
+    if not password_valid:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid admin credentials"
         )
     
     # Update last login
-    await zenstack_client.update_admin(admin['id'], {'lastLogin': datetime.utcnow().isoformat() + 'Z'})
+    async with db_client:
+        await db_client.update_admin(admin['id'], {'lastLogin': datetime.utcnow().isoformat() + 'Z'})
     
     return admin
 
@@ -248,26 +254,35 @@ async def get_current_admin(credentials: HTTPAuthorizationCredentials = Depends(
     )
     
     try:
+        print(f"[DEBUG] Validating admin token: {credentials.credentials[:20]}...")
+        
         # Decode JWT token
         payload = jwt.decode(credentials.credentials, settings.SECRET_KEY, algorithms=[settings.algorithm])
         admin_id: str = payload.get("adminId")
         user_type: str = payload.get("userType", "user")
         
+        print(f"[DEBUG] Token payload - adminId: {admin_id}, userType: {user_type}")
+        
         if admin_id is None or user_type != "admin":
+            print(f"[DEBUG] Token validation failed - adminId: {admin_id}, userType: {user_type}")
             raise credentials_exception
             
-        # Get all admins and filter by ID (same pattern as user auth)
-        all_admins = await zenstack_client.get_admins()
+        # Get admin by ID
+        async with db_client:
+            admin = await db_client.get_admin_by_id(admin_id)
         
-        if all_admins and 'data' in all_admins:
-            admins = all_admins['data']
-            for admin in admins:
-                if admin.get('id') == admin_id and admin.get('isActive', True):
-                    return admin
+        print(f"[DEBUG] Admin found: {admin is not None}")
+        if admin:
+            print(f"[DEBUG] Admin active: {admin.get('isActive', True)}")
         
+        if not admin or not admin.get('isActive', True):
+            print(f"[DEBUG] Admin not found or inactive")
+            raise credentials_exception
+        return admin
+        
+    except JWTError as e:
+        print(f"[DEBUG] JWT Error: {str(e)}")
         raise credentials_exception
-        
-    except JWTError:
-        raise credentials_exception
-    except Exception:
+    except Exception as e:
+        print(f"[DEBUG] Exception: {str(e)}")
         raise credentials_exception

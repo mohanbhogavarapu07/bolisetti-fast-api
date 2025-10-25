@@ -2,9 +2,9 @@ from fastapi import APIRouter, HTTPException, status, Depends
 from typing import List
 from app.auth import get_current_user
 from app.models import Media, MediaCreate, MediaUpdate
-from app.zenstack_client import zenstack_client
+from app.database import db_client
 
-router = APIRouter(prefix="/media", tags=["media"])
+router = APIRouter(prefix="/media")
 
 @router.get("/", response_model=List[Media])
 async def get_media(

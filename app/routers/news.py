@@ -2,10 +2,10 @@ from fastapi import APIRouter, HTTPException, status, Depends, Query, UploadFile
 from typing import List, Optional
 from app.models import News, NewsCreate, NewsUpdate
 from app.auth import get_current_user, get_current_admin
-from app.zenstack_client import zenstack_client
+from app.database import db_client
 from app.utils import save_upload_file
 
-router = APIRouter(prefix="/news", tags=["news"])
+router = APIRouter(prefix="/news")
 
 @router.get("/", response_model=List[News])
 async def get_news(
@@ -15,12 +15,9 @@ async def get_news(
 ):
     """Get all news articles"""
     try:
-        result = await zenstack_client.get_news(
-            skip=skip,
-            take=limit,
-            user_token=current_user.get('token')
-        )
-        return result.get('data', [])
+        async with db_client:
+            news = await db_client.get_news(skip=skip, take=limit)
+            return news
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -34,21 +31,17 @@ async def get_news_by_id(
 ):
     """Get news article by ID"""
     try:
-        result = await zenstack_client.get_news_item(
-            news_id=news_id,
-            user_token=current_user.get('token')
-        )
-        # Extract the actual news data from the ZenStack response
-        if 'data' in result:
-            return result['data']
-        else:
-            return result
+        async with db_client:
+            news = await db_client.get_news_by_id(news_id)
+            if not news:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="News article not found"
+                )
+            return news
+    except HTTPException:
+        raise
     except Exception as e:
-        if "404" in str(e) or "not found" in str(e).lower():
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="News article not found"
-            )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch news: {str(e)}"
@@ -82,15 +75,9 @@ async def create_news(
             "imageUrl": image_url
         }
         
-        result = await zenstack_client.create_news(
-            news_data=news_data,
-            user_token=current_admin.get('token')
-        )
-        # Extract the actual news data from the ZenStack response
-        if 'data' in result:
-            return result['data']
-        else:
-            return result
+        async with db_client:
+            news = await db_client.create_news(news_data)
+            return news
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -104,31 +91,21 @@ async def update_news(
 ):
     """Update a news article (Admin only)"""
     try:
-        # Check if news exists first
-        existing_news = await zenstack_client.get_news_item(
-            news_id=news_id,
-            user_token=current_admin.get('token')
-        )
-        if not existing_news or not existing_news.get('data'):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="News article not found"
-            )
-        
-        update_data = {k: v for k, v in news_update.dict().items() if v is not None}
-        if not update_data:
-            return existing_news.get('data', existing_news)
-        
-        result = await zenstack_client.update_news(
-            news_id=news_id,
-            news_data=update_data,
-            user_token=current_admin.get('token')
-        )
-        # Extract the actual news data from the ZenStack response
-        if 'data' in result:
-            return result['data']
-        else:
-            return result
+        async with db_client:
+            # Check if news exists first
+            existing_news = await db_client.get_news_by_id(news_id)
+            if not existing_news:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="News article not found"
+                )
+            
+            update_data = {k: v for k, v in news_update.dict().items() if v is not None}
+            if not update_data:
+                return existing_news
+            
+            news = await db_client.update_news(news_id, update_data)
+            return news
     except HTTPException:
         raise
     except Exception as e:
@@ -144,22 +121,17 @@ async def delete_news(
 ):
     """Delete a news article (Admin only)"""
     try:
-        # Check if news exists first
-        existing_news = await zenstack_client.get_news_item(
-            news_id=news_id,
-            user_token=current_admin.get('token')
-        )
-        if not existing_news or not existing_news.get('data'):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="News article not found"
-            )
-        
-        await zenstack_client.delete_news(
-            news_id=news_id,
-            user_token=current_admin.get('token')
-        )
-        return {"message": "News article deleted successfully"}
+        async with db_client:
+            # Check if news exists first
+            existing_news = await db_client.get_news_by_id(news_id)
+            if not existing_news:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="News article not found"
+                )
+            
+            await db_client.delete_news(news_id)
+            return {"message": "News article deleted successfully"}
     except HTTPException:
         raise
     except Exception as e:

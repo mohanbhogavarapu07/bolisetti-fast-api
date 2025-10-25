@@ -2,7 +2,7 @@ import random
 import string
 from datetime import datetime, timedelta
 from typing import Optional
-from app.zenstack_client import zenstack_client
+from app.database import db_client
 from app.config import settings
 import httpx
 
@@ -110,17 +110,19 @@ class OTPService:
         try:
             # Generate OTP
             otp = self.generate_otp()
-            expires_at = datetime.utcnow() + timedelta(minutes=self.otp_expiry_minutes)
+            from datetime import timezone
+            expires_at = datetime.now(timezone.utc) + timedelta(minutes=self.otp_expiry_minutes)
             
             # Store OTP in database
             otp_data = {
                 "phoneNumber": phone_number,
                 "otp": otp,
-                "expiresAt": expires_at.isoformat() + "Z",
+                "expiresAt": expires_at.isoformat(),
                 "isUsed": False
             }
             
-            result = await zenstack_client.create_otp(otp_data)
+            async with db_client:
+                result = await db_client.create_otp(otp_data)
             
             # Send SMS with OTP
             sms_message = f"Your OTP for Bollisetti App is: {otp}. Valid for {self.otp_expiry_minutes} minutes. Do not share this code with anyone."
@@ -154,15 +156,16 @@ class OTPService:
         """
         try:
             # Get OTP from database
-            otp_record = await zenstack_client.get_otp_by_phone(phone_number)
+            async with db_client:
+                otp_record = await db_client.get_otp_by_phone(phone_number)
             
-            if not otp_record or 'data' not in otp_record:
+            if not otp_record:
                 return {
                     "success": False,
                     "message": "OTP not found"
                 }
             
-            otp_data = otp_record['data']
+            otp_data = otp_record
             
             # Check if OTP is already used
             if otp_data.get('isUsed', False):
@@ -173,9 +176,15 @@ class OTPService:
             
             # Check if OTP is expired
             expires_at_str = otp_data['expiresAt']
-            # Parse the stored datetime string (remove Z and parse as UTC)
-            expires_at = datetime.fromisoformat(expires_at_str.replace('Z', ''))
-            current_time = datetime.utcnow()
+            # Parse the stored datetime string and ensure it's timezone-aware
+            if expires_at_str.endswith('Z'):
+                expires_at = datetime.fromisoformat(expires_at_str.replace('Z', '+00:00'))
+            else:
+                expires_at = datetime.fromisoformat(expires_at_str)
+            
+            # Use timezone-aware current time
+            from datetime import timezone
+            current_time = datetime.now(timezone.utc)
             
             if current_time > expires_at:
                 return {
@@ -192,7 +201,8 @@ class OTPService:
                 }
             
             # Mark OTP as used
-            await zenstack_client.mark_otp_used(otp_data['id'])
+            async with db_client:
+                await db_client.mark_otp_used(otp_data['id'])
             
             return {
                 "success": True,
@@ -208,7 +218,8 @@ class OTPService:
     async def cleanup_expired_otps(self):
         """Clean up expired OTPs from database"""
         try:
-            await zenstack_client.cleanup_expired_otps()
+            async with db_client:
+                await db_client.cleanup_expired_otps()
         except Exception as e:
             print(f"Error cleaning up expired OTPs: {str(e)}")
 

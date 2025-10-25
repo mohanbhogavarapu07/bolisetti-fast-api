@@ -2,9 +2,9 @@ from fastapi import APIRouter, HTTPException, status, Depends, Query
 from typing import List, Optional
 from app.models import Notification, NotificationCreate, NotificationUpdate
 from app.auth import get_current_user
-from app.zenstack_client import zenstack_client
+from app.database import db_client
 
-router = APIRouter(prefix="/notifications", tags=["notifications"])
+router = APIRouter(prefix="/notifications")
 
 @router.get("/user/{user_id}", response_model=List[Notification])
 async def get_user_notifications(
