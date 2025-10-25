@@ -1,11 +1,41 @@
 from fastapi import APIRouter, HTTPException, status, Depends, Query, UploadFile, File, Form
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import List, Optional
-from app.models import Grievance, GrievanceCreate, GrievanceUpdate, GrievanceComment, GrievanceCommentCreate, GrievanceStatus, Priority
+from app.models import Grievance, GrievanceCreate, GrievanceUpdate, GrievanceStatus, Priority, GrievanceStatusUpdate
 from app.auth import get_current_user, get_current_admin
-from app.zenstack_client import zenstack_client
+from fastapi import Depends
+from app.database import db_client
 from app.utils import save_upload_file
+from app.decorators import admin_required, check_resource_ownership
 
-router = APIRouter(prefix="/grievances", tags=["grievances"])
+router = APIRouter(prefix="/grievances")
+
+async def get_current_user_or_admin(
+    credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer())
+):
+    """Get current user or admin - allows both to access the endpoint"""
+    from app.auth import get_current_user, get_current_admin
+    from fastapi import HTTPException, status
+    
+    # Try user authentication first
+    try:
+        user = await get_current_user(credentials)
+        return user
+    except:
+        pass
+    
+    # Try admin authentication
+    try:
+        admin = await get_current_admin(credentials)
+        return admin
+    except:
+        pass
+    
+    # If both fail, raise authentication error
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Authentication required"
+    )
 
 @router.get("/", response_model=List[Grievance])
 async def get_grievances(
@@ -14,16 +44,13 @@ async def get_grievances(
     status_filter: Optional[GrievanceStatus] = Query(None),
     priority_filter: Optional[Priority] = Query(None),
     constituency_filter: Optional[str] = Query(None),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user_or_admin)
 ):
-    """Get all grievances with optional filters"""
+    """Get all grievances with optional filters (Users and Admins)"""
     try:
-        result = await zenstack_client.get_grievances(
-            skip=skip,
-            take=limit,
-            user_token=current_user.get('token')
-        )
-        return result.get('data', [])
+        async with db_client:
+            grievances = await db_client.get_grievances(skip=skip, take=limit)
+            return grievances
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -57,18 +84,15 @@ async def get_user_grievances(
 async def get_my_grievances(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user_or_admin)
 ):
-    """Get current user's grievances"""
+    """Get current user's grievances (Users and Admins)"""
     try:
-        result = await zenstack_client.get_grievances(
-            skip=skip,
-            take=limit,
-            user_token=current_user.get('token')
-        )
-        # Filter by current user's grievances
-        user_grievances = [g for g in result.get('data', []) if g.get('userId') == current_user["id"]]
-        return user_grievances
+        async with db_client:
+            all_grievances = await db_client.get_grievances(skip=skip, take=limit)
+            # Filter by current user's grievances
+            user_grievances = [g for g in all_grievances if g.get('userId') == current_user["id"]]
+            return user_grievances
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -78,25 +102,21 @@ async def get_my_grievances(
 @router.get("/{grievance_id}", response_model=Grievance)
 async def get_grievance(
     grievance_id: str,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user_or_admin)
 ):
-    """Get grievance by ID"""
+    """Get grievance by ID (Users and Admins)"""
     try:
-        result = await zenstack_client.get_grievance(
-            grievance_id=grievance_id,
-            user_token=current_user.get('token')
-        )
-        # Extract the actual grievance data from the ZenStack response
-        if 'data' in result:
-            return result['data']
-        else:
-            return result
+        async with db_client:
+            grievance = await db_client.get_grievance(grievance_id)
+            if not grievance:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Grievance not found"
+                )
+            return grievance
+    except HTTPException:
+        raise
     except Exception as e:
-        if "404" in str(e) or "not found" in str(e).lower():
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Grievance not found"
-            )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch grievance: {str(e)}"
@@ -110,11 +130,13 @@ async def create_grievance(
     area: Optional[str] = Form(None),
     constituencyId: Optional[str] = Form(None),
     departmentId: Optional[str] = Form(None),
+    constituency: Optional[str] = Form(None),  # Add constituency name
+    department: Optional[str] = Form(None),    # Add department name
     priority: str = Form("MEDIUM"),
     file: Optional[UploadFile] = File(None),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user_or_admin)
 ):
-    """Create a new grievance with optional image upload"""
+    """Create a new grievance with optional image upload (Users and Admins)"""
     try:
         # Handle image upload if provided
         image_url = None
@@ -128,28 +150,80 @@ async def create_grievance(
                 image_url = None
         
         # Create grievance data
+        # Handle both user and admin cases
+        user_id = current_user.get("id")
+        
+        # Check if this is an admin by looking for admin-specific fields
+        is_admin = (
+            current_user.get("userType") == "admin" or 
+            "adminId" in current_user or 
+            "password" in current_user  # Admins have password field, users don't
+        )
+        
+        if is_admin:
+            # For admins, we need to use a system user ID
+            try:
+                async with db_client:
+                    # Try to find a system user
+                    system_user = await db_client.get_user_by_email("system@bolisetti.com")
+                    if system_user:
+                        user_id = system_user["id"]
+                    else:
+                        # Create a system user for admin operations
+                        system_user_data = {
+                            "firstName": "System",
+                            "lastName": "Admin", 
+                            "email": "system@bolisetti.com",
+                            "phoneNumber": "0000000000",
+                            "isActive": True
+                        }
+                        system_user = await db_client.create_user(system_user_data)
+                        user_id = system_user["id"]
+            except Exception as e:
+                # Fallback to admin ID (this might cause foreign key error)
+                user_id = current_user.get("id")
+        
+        # Look up constituency and department IDs if names are provided
+        final_constituency_id = constituencyId
+        final_department_id = departmentId
+        
+        if constituency and not constituencyId:
+            try:
+                async with db_client:
+                    constituencies = await db_client.get_constituencies()
+                    for const in constituencies:
+                        if const.get('name', '').lower() == constituency.lower():
+                            final_constituency_id = const.get('id')
+                            break
+            except Exception as e:
+                print(f"Error looking up constituency: {str(e)}")
+        
+        if department and not departmentId:
+            try:
+                async with db_client:
+                    departments = await db_client.get_grievance_departments()
+                    for dept in departments:
+                        if dept.get('name', '').lower() == department.lower():
+                            final_department_id = dept.get('id')
+                            break
+            except Exception as e:
+                print(f"Error looking up department: {str(e)}")
+        
         grievance_data = {
             "title": title,
             "description": description,
             "address": address,
             "area": area,
-            "constituencyId": constituencyId,
-            "departmentId": departmentId,
+            "constituencyId": final_constituency_id,
+            "departmentId": final_department_id,
             "priority": priority,
             "imageUrl": image_url,
-            "userId": current_user["id"]
+            "userId": user_id
         }
         
-        result = await zenstack_client.create_grievance(
-            grievance_data=grievance_data,
-            user_token=current_user.get('token')
-        )
-        
-        # Extract the actual grievance data from the ZenStack response
-        if 'data' in result:
-            return result['data']
-        else:
-            return result
+        async with db_client:
+            grievance = await db_client.create_grievance(grievance_data)
+            return grievance
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -164,37 +238,26 @@ async def update_grievance(
 ):
     """Update a grievance"""
     try:
-        # Check if grievance exists first
-        existing_grievance = await zenstack_client.get_grievance(
-            grievance_id=grievance_id,
-            user_token=current_user.get('token')
-        )
-        if not existing_grievance or not existing_grievance.get('data'):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Grievance not found"
-            )
-        
-        grievance_data = existing_grievance.get('data', existing_grievance)
-        # Only allow users to update their own grievances or admin users
-        if grievance_data.get("userId") != current_user["id"]:
-            # Add admin check here if needed
-            pass
-        
-        update_data = {k: v for k, v in grievance_update.dict().items() if v is not None}
-        if not update_data:
-            return grievance_data
-        
-        result = await zenstack_client.update_grievance(
-            grievance_id=grievance_id,
-            grievance_data=update_data,
-            user_token=current_user.get('token')
-        )
-        # Extract the actual grievance data from the ZenStack response
-        if 'data' in result:
-            return result['data']
-        else:
-            return result
+        async with db_client:
+            # Check if grievance exists first
+            existing_grievance = await db_client.get_grievance(grievance_id)
+            if not existing_grievance:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Grievance not found"
+                )
+            
+            # Only allow users to update their own grievances or admin users
+            if existing_grievance.get("userId") != current_user["id"]:
+                # Add admin check here if needed
+                pass
+            
+            update_data = {k: v for k, v in grievance_update.dict().items() if v is not None}
+            if not update_data:
+                return existing_grievance
+            
+            grievance = await db_client.update_grievance(grievance_id, update_data)
+            return grievance
     except HTTPException:
         raise
     except Exception as e:
@@ -240,152 +303,10 @@ async def delete_grievance(
             detail=f"Failed to delete grievance: {str(e)}"
         )
 
-# Grievance Comments
-@router.post("/{grievance_id}/comments", response_model=GrievanceComment)
-async def add_comment(
-    grievance_id: str,
-    comment_data: GrievanceCommentCreate,
-    current_user: dict = Depends(get_current_user)
-):
-    """Add a comment to a grievance"""
-    try:
-        # Check if grievance exists first
-        grievance = await zenstack_client.get_grievance(
-            grievance_id=grievance_id,
-            user_token=current_user.get('token')
-        )
-        if not grievance or not grievance.get('data'):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Grievance not found"
-            )
-        
-        result = await zenstack_client.create_grievance_comment(
-            grievance_id=grievance_id,
-            comment_data={
-                "content": comment_data.content,
-                "userId": current_user["id"]
-            },
-            user_token=current_user.get('token')
-        )
-        # Extract the actual comment data from the ZenStack response
-        if 'data' in result:
-            return result['data']
-        else:
-            return result
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to add comment: {str(e)}"
-        )
-
-@router.get("/{grievance_id}/comments", response_model=List[GrievanceComment])
-async def get_comments(
-    grievance_id: str,
-    current_user: dict = Depends(get_current_user)
-):
-    """Get comments for a grievance"""
-    try:
-        # Check if grievance exists first
-        grievance = await zenstack_client.get_grievance(
-            grievance_id=grievance_id,
-            user_token=current_user.get('token')
-        )
-        if not grievance or not grievance.get('data'):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Grievance not found"
-            )
-        
-        result = await zenstack_client.get_grievance_comments(
-            grievance_id=grievance_id,
-            user_token=current_user.get('token')
-        )
-        return result.get('data', [])
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch comments: {str(e)}"
-        )
-
-@router.put("/assign/{grievance_id}")
-async def assign_grievance(
-    grievance_id: str,
-    department_id: str,
-    current_user: dict = Depends(get_current_user)
-):
-    """Assign a grievance to a specific department (Admin only)"""
-    # Add admin check here
-    try:
-        # Check if grievance exists first
-        existing_grievance = await zenstack_client.get_grievance(
-            grievance_id=grievance_id,
-            user_token=current_user.get('token')
-        )
-        if not existing_grievance or not existing_grievance.get('data'):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Grievance not found"
-            )
-        
-        # Update grievance with department assignment
-        result = await zenstack_client.update_grievance(
-            grievance_id=grievance_id,
-            grievance_data={"departmentId": department_id},
-            user_token=current_user.get('token')
-        )
-        return {"message": "Grievance assigned successfully", "grievance": result.get('data', result)}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to assign grievance: {str(e)}"
-        )
-
-# Statistics
-@router.get("/stats/summary")
-async def get_grievance_stats(current_user: dict = Depends(get_current_user)):
-    """Get grievance statistics"""
-    try:
-        # Get all grievances to calculate stats
-        result = await zenstack_client.get_grievances(
-            user_token=current_user.get('token')
-        )
-        grievances = result.get('data', [])
-        
-        # Calculate statistics
-        total_grievances = len(grievances)
-        
-        # Get grievances by status
-        status_counts = {}
-        for status in GrievanceStatus:
-            count = len([g for g in grievances if g.get('status') == status.value])
-            status_counts[status.value] = count
-        
-        # Get grievances by priority
-        priority_counts = {}
-        for priority in Priority:
-            count = len([g for g in grievances if g.get('priority') == priority.value])
-            priority_counts[priority.value] = count
-        
-        return {
-            "total": total_grievances,
-            "by_status": status_counts,
-            "by_priority": priority_counts
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get statistics: {str(e)}"
-        )
 
 # Admin-only endpoints
 @router.get("/admin/all", response_model=List[Grievance])
+@admin_required
 async def get_all_grievances_admin(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
@@ -396,12 +317,9 @@ async def get_all_grievances_admin(
 ):
     """Get all grievances (Admin only)"""
     try:
-        result = await zenstack_client.get_grievances(
-            skip=skip,
-            take=limit,
-            user_token=current_admin.get('token')
-        )
-        return result.get('data', [])
+        async with db_client:
+            grievances = await db_client.get_grievances(skip=skip, take=limit)
+            return grievances
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -409,6 +327,7 @@ async def get_all_grievances_admin(
         )
 
 @router.get("/admin/ongoing", response_model=List[Grievance])
+@admin_required
 async def get_ongoing_grievances_admin(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
@@ -416,18 +335,15 @@ async def get_ongoing_grievances_admin(
 ):
     """Get ongoing grievances (Admin only)"""
     try:
-        result = await zenstack_client.get_grievances(
-            skip=skip,
-            take=limit,
-            user_token=current_admin.get('token')
-        )
-        # Filter for ongoing grievances (not completed or closed)
-        ongoing_statuses = [GrievanceStatus.PENDING, GrievanceStatus.IN_PROGRESS, GrievanceStatus.ASSIGNED]
-        ongoing_grievances = [
-            g for g in result.get('data', []) 
-            if g.get('status') in [status.value for status in ongoing_statuses]
-        ]
-        return ongoing_grievances
+        async with db_client:
+            all_grievances = await db_client.get_grievances(skip=skip, take=limit)
+            # Filter for ongoing grievances (not completed or closed)
+            ongoing_statuses = ["IN_REVIEW", "IN_PROGRESS", "ASSIGNED"]
+            ongoing_grievances = [
+                g for g in all_grievances 
+                if g.get('status') in ongoing_statuses
+            ]
+            return ongoing_grievances
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -435,38 +351,49 @@ async def get_ongoing_grievances_admin(
         )
 
 @router.put("/admin/{grievance_id}/status", response_model=Grievance)
+@admin_required
 async def update_grievance_status_admin(
     grievance_id: str,
-    status_update: GrievanceUpdate,
+    status_data: GrievanceStatusUpdate,
     current_admin: dict = Depends(get_current_admin)
 ):
     """Update grievance status (Admin only)"""
     try:
-        # Check if grievance exists first
-        existing_grievance = await zenstack_client.get_grievance(
-            grievance_id=grievance_id,
-            user_token=current_admin.get('token')
-        )
-        if not existing_grievance or not existing_grievance.get('data'):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Grievance not found"
-            )
-        
-        update_data = {k: v for k, v in status_update.dict().items() if v is not None}
-        if not update_data:
-            return existing_grievance.get('data', existing_grievance)
-        
-        result = await zenstack_client.update_grievance(
-            grievance_id=grievance_id,
-            grievance_data=update_data,
-            user_token=current_admin.get('token')
-        )
-        # Extract the actual grievance data from the ZenStack response
-        if 'data' in result:
-            return result['data']
-        else:
-            return result
+        async with db_client:
+            # Check if grievance exists first
+            existing_grievance = await db_client.get_grievance(grievance_id)
+            if not existing_grievance:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Grievance not found"
+                )
+            
+            # Convert frontend status format to backend format
+            status_mapping = {
+                "Open": "OPEN",
+                "In Review": "IN_REVIEW", 
+                "In Progress": "IN_PROGRESS",
+                "Resolved": "RESOLVED",
+                "Closed": "CLOSED"
+            }
+            
+            update_data = {}
+            if status_data.status is not None:
+                # Convert frontend status to backend format
+                backend_status = status_mapping.get(status_data.status, status_data.status)
+                update_data['status'] = backend_status
+            
+            if status_data.priority is not None:
+                update_data['priority'] = status_data.priority
+            
+            if status_data.departmentId is not None:
+                update_data['departmentId'] = status_data.departmentId
+            
+            if not update_data:
+                return existing_grievance
+            
+            grievance = await db_client.update_grievance(grievance_id, update_data)
+            return grievance
     except HTTPException:
         raise
     except Exception as e:
@@ -474,3 +401,4 @@ async def update_grievance_status_admin(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to update grievance status: {str(e)}"
         )
+

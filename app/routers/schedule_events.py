@@ -3,9 +3,10 @@ from typing import List, Optional
 from datetime import datetime, date
 from app.models import ScheduleEvent, ScheduleEventCreate, ScheduleEventUpdate
 from app.auth import get_current_user, get_current_admin
-from app.zenstack_client import zenstack_client
+from app.database import db_client
+from app.decorators import admin_required
 
-router = APIRouter(prefix="/schedule_events", tags=["schedule_events"])
+router = APIRouter(prefix="/schedule_events")
 
 @router.get("/", response_model=List[ScheduleEvent])
 async def get_schedule_events(
@@ -17,12 +18,8 @@ async def get_schedule_events(
 ):
     """Get all scheduled events with optional date filters"""
     try:
-        result = await zenstack_client.get_schedule_events(
-            skip=skip,
-            take=limit,
-            user_token=current_user.get('token')
-        )
-        events = result.get('data', [])
+        async with db_client:
+            events = await db_client.get_schedule_events(skip=skip, take=limit)
         
         # Apply date filters if provided
         if start_date:
@@ -47,27 +44,24 @@ async def get_schedule_event_by_id(
 ):
     """Get scheduled event by ID"""
     try:
-        result = await zenstack_client.get_schedule_event(
-            event_id=event_id,
-            user_token=current_user.get('token')
-        )
-        # Extract the actual event data from the ZenStack response
-        if 'data' in result:
-            return result['data']
-        else:
-            return result
+        async with db_client:
+            event = await db_client.get_schedule_event(event_id)
+            if not event:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Scheduled event not found"
+                )
+            return event
+    except HTTPException:
+        raise
     except Exception as e:
-        if "404" in str(e) or "not found" in str(e).lower():
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Scheduled event not found"
-            )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch scheduled event: {str(e)}"
         )
 
 @router.post("/", response_model=ScheduleEvent)
+@admin_required
 async def create_schedule_event(
     event_data: ScheduleEventCreate,
     current_admin: dict = Depends(get_current_admin)
@@ -79,15 +73,9 @@ async def create_schedule_event(
         if 'eventDatetime' in event_dict and event_dict['eventDatetime']:
             event_dict['eventDatetime'] = event_dict['eventDatetime'].isoformat()
         
-        result = await zenstack_client.create_schedule_event(
-            event_data=event_dict,
-            user_token=current_admin.get('token')
-        )
-        # Extract the actual event data from the ZenStack response
-        if 'data' in result:
-            return result['data']
-        else:
-            return result
+        async with db_client:
+            event = await db_client.create_schedule_event(event_dict)
+            return event
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -95,6 +83,7 @@ async def create_schedule_event(
         )
 
 @router.put("/{event_id}", response_model=ScheduleEvent)
+@admin_required
 async def update_schedule_event(
     event_id: str,
     event_update: ScheduleEventUpdate,
@@ -102,35 +91,25 @@ async def update_schedule_event(
 ):
     """Update a scheduled event (Admin only)"""
     try:
-        # Check if event exists first
-        existing_event = await zenstack_client.get_schedule_event(
-            event_id=event_id,
-            user_token=current_admin.get('token')
-        )
-        if not existing_event or not existing_event.get('data'):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Scheduled event not found"
-            )
-        
-        update_data = {k: v for k, v in event_update.dict().items() if v is not None}
-        if not update_data:
-            return existing_event.get('data', existing_event)
-        
-        # Convert datetime to ISO string format for JSON serialization
-        if 'eventDatetime' in update_data and update_data['eventDatetime']:
-            update_data['eventDatetime'] = update_data['eventDatetime'].isoformat()
-        
-        result = await zenstack_client.update_schedule_event(
-            event_id=event_id,
-            event_data=update_data,
-            user_token=current_admin.get('token')
-        )
-        # Extract the actual event data from the ZenStack response
-        if 'data' in result:
-            return result['data']
-        else:
-            return result
+        async with db_client:
+            # Check if event exists first
+            existing_event = await db_client.get_schedule_event(event_id)
+            if not existing_event:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Scheduled event not found"
+                )
+            
+            update_data = {k: v for k, v in event_update.dict().items() if v is not None}
+            if not update_data:
+                return existing_event
+            
+            # Convert datetime to ISO string format for JSON serialization
+            if 'eventDatetime' in update_data and update_data['eventDatetime']:
+                update_data['eventDatetime'] = update_data['eventDatetime'].isoformat()
+            
+            event = await db_client.update_schedule_event(event_id, update_data)
+            return event
     except HTTPException:
         raise
     except Exception as e:
@@ -140,27 +119,23 @@ async def update_schedule_event(
         )
 
 @router.delete("/{event_id}")
+@admin_required
 async def delete_schedule_event(
     event_id: str,
     current_admin: dict = Depends(get_current_admin)
 ):
     """Delete a scheduled event (Admin only)"""
     try:
-        # Check if event exists first
-        existing_event = await zenstack_client.get_schedule_event(
-            event_id=event_id,
-            user_token=current_admin.get('token')
-        )
-        if not existing_event or not existing_event.get('data'):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Scheduled event not found"
-            )
-        
-        await zenstack_client.delete_schedule_event(
-            event_id=event_id,
-            user_token=current_admin.get('token')
-        )
+        async with db_client:
+            # Check if event exists first
+            existing_event = await db_client.get_schedule_event(event_id)
+            if not existing_event:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Scheduled event not found"
+                )
+            
+            await db_client.delete_schedule_event(event_id)
         return {"message": "Scheduled event deleted successfully"}
     except HTTPException:
         raise
@@ -181,10 +156,8 @@ async def get_upcoming_events(
         start_date = datetime.now()
         end_date = start_date + timedelta(days=days)
         
-        result = await zenstack_client.get_schedule_events(
-            user_token=current_user.get('token')
-        )
-        events = result.get('data', [])
+        async with db_client:
+            events = await db_client.get_schedule_events()
         
         # Filter events within the date range
         filtered_events = []

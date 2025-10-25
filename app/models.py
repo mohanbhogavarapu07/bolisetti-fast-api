@@ -420,10 +420,24 @@ class AdminLoginRequest(BaseModel):
     email: str
     password: str
 
+class UserToken(BaseModel):
+    access_token: str
+    token_type: str
+    expires_in: int
+    user_type: str = "user"
+    user: Optional[User] = None
+
 class AdminToken(BaseModel):
     access_token: str
     token_type: str
     expires_in: int
     user_type: str = "admin"
+
+# Grievance Status Update Model
+class GrievanceStatusUpdate(BaseModel):
+    status: Optional[GrievanceStatus] = None
+    priority: Optional[Priority] = None
+    departmentId: Optional[str] = None
+    notes: Optional[str] = None
 
 # Legacy password-based models removed - using OTP authentication instead

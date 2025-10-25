@@ -1,0 +1,273 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-py"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = "postgresql://postgres.mqvtfijggstbztaxmonu:Mohan@2005@aws-1-ap-south-1.pooler.supabase.com:5432/postgres"
+}
+
+// Core User Management
+model User {
+  id          String   @id @default(cuid())
+  firstName   String?
+  lastName    String?
+  email       String?  @unique
+  phoneNumber String?  @unique
+  voterId     String?  @unique
+  profilePictureUrl String?
+  address     String?
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Foreign Keys
+  roleId      String?
+  constituencyId String?
+
+  // Relations
+  role        Role? @relation(fields: [roleId], references: [id], onDelete: SetNull)
+  constituency Constituency? @relation(fields: [constituencyId], references: [id], onDelete: SetNull)
+  grievances  Grievance[]
+  notifications Notification[]
+  comments    GrievanceComment[]
+  sessions    Session[]
+
+  @@map("User")
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  users       User[]
+
+  @@map("Role")
+}
+
+model Constituency {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  users       User[]
+  grievances  Grievance[]
+
+  @@map("Constituency")
+}
+
+// Grievance Management
+model Grievance {
+  id           String   @id @default(cuid())
+  title        String
+  description  String
+  address      String
+  area         String?
+  status       GrievanceStatus @default(OPEN)
+  priority     Priority @default(MEDIUM)
+  imageUrl     String?  // Direct Supabase URL for image
+  createdAt    DateTime @default(now())
+  lastUpdated  DateTime @updatedAt
+
+  // Foreign Keys
+  userId       String
+  constituencyId String?
+  departmentId String?
+  statusId     String?
+
+  // Relations
+  user         User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  constituency Constituency? @relation(fields: [constituencyId], references: [id], onDelete: SetNull)
+  department   GrievanceDepartment? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  statusEnum   GrievanceStatusEnum? @relation(fields: [statusId], references: [id], onDelete: SetNull)
+  comments     GrievanceComment[]
+
+  @@map("Grievance")
+}
+
+model GrievanceDepartment {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  grievances  Grievance[]
+
+  @@map("GrievanceDepartment")
+}
+
+model GrievanceStatusEnum {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  grievances  Grievance[]
+
+  @@map("GrievanceStatusEnum")
+}
+
+model GrievanceComment {
+  id          String   @id @default(cuid())
+  content     String
+  createdAt   DateTime @default(now())
+
+  // Foreign Keys
+  grievanceId String
+  userId      String
+
+  // Relations
+  grievance   Grievance @relation(fields: [grievanceId], references: [id], onDelete: Cascade)
+  user        User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("GrievanceComment")
+}
+
+// App Content & Events
+model News {
+  id          String   @id @default(cuid())
+  title       String
+  content     String
+  imageUrl    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("News")
+}
+
+model Project {
+  id          String   @id @default(cuid())
+  title       String
+  description String
+  location    String?
+  projectStatus String?
+  imageUrl    String?  // Direct Supabase URL for project image
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("Project")
+}
+
+model ScheduleEvent {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  location    String?
+  eventDatetime DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("ScheduleEvent")
+}
+
+model Media {
+  id          String   @id @default(cuid())
+  title       String
+  mediaUrl    String
+  type        MediaType
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("Media")
+}
+
+model Notification {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  isRead      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Foreign Keys
+  userId      String?
+
+  // Relations
+  user        User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@map("Notification")
+}
+
+// Authentication System Models
+model VoterId {
+  id          String   @id @default(cuid())
+  voterId     String   @unique
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("VoterId")
+}
+
+// Admin System Models (Separate from User system)
+model Admin {
+  id          String   @id @default(cuid())
+  firstName   String
+  lastName    String
+  email       String   @unique
+  password    String   // Hashed password
+  isActive    Boolean  @default(true)
+  lastLogin   DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("Admin")
+}
+
+model OTP {
+  id          String   @id @default(cuid())
+  phoneNumber String
+  otp         String
+  expiresAt   DateTime
+  isUsed      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@map("OTP")
+}
+
+model Session {
+  id          String   @id @default(cuid())
+  userId      String
+  phoneNumber String
+  expiresAt   DateTime
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  user        User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("Session")
+}
+
+// Enums
+enum GrievanceStatus {
+  OPEN
+  IN_REVIEW
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+}
